@@ -1004,6 +1004,7 @@ void chain_plugin::plugin_initialize(const variables_map& options) {
             }
          }
 
+         ilog("before genesis-json");
          if( options.count( "genesis-json" ) ) {
             bfs::path genesis_file = options.at( "genesis-json" ).as<bfs::path>();
             if( genesis_file.is_relative()) {
@@ -1064,6 +1065,7 @@ void chain_plugin::plugin_initialize(const variables_map& options) {
                         "--genesis-timestamp is only valid if also passed in with --genesis-json");
          }
 
+         ilog("before f( !chain_id )");
          if( !chain_id ) {
             if( my->genesis ) {
                // Uninitialized state database and genesis state extracted from block log
@@ -1084,6 +1086,7 @@ void chain_plugin::plugin_initialize(const variables_map& options) {
          }
       }
 
+      ilog("before options.count(read-mode)");
       if ( options.count("read-mode") ) {
          my->chain_config->read_mode = options.at("read-mode").as<db_read_mode>();
       }
@@ -1103,6 +1106,7 @@ void chain_plugin::plugin_initialize(const variables_map& options) {
          enable_accept_transactions();
       }
 
+      ilog("before validation-mode");
       if ( options.count("validation-mode") ) {
          my->chain_config->block_validation_mode = options.at("validation-mode").as<validation_mode>();
       }
@@ -1113,6 +1117,7 @@ void chain_plugin::plugin_initialize(const variables_map& options) {
          my->chain_config->db_hugepage_paths = options.at("database-hugepage-path").as<std::vector<std::string>>();
 #endif
 
+      ilog("eos-vm-oc-cache-size-mb");
 #ifdef EOSIO_EOS_VM_OC_RUNTIME_ENABLED
       if( options.count("eos-vm-oc-cache-size-mb") )
          my->chain_config->eosvmoc_config.cache_size = options.at( "eos-vm-oc-cache-size-mb" ).as<uint64_t>() * 1024u * 1024u;
@@ -1122,8 +1127,10 @@ void chain_plugin::plugin_initialize(const variables_map& options) {
          my->chain_config->eosvmoc_tierup = true;
 #endif
 
+      ilog("before my->chain.emplace");
       my->chain.emplace( *my->chain_config, std::move(pfs), *chain_id );
 
+      ilog("before deep-mind");
       // initialize deep mind logging
       if ( options.at( "deep-mind" ).as<bool>() ) {
          // The actual `fc::dmlog_appender` implementation that is currently used by deep mind
@@ -1153,26 +1160,31 @@ void chain_plugin::plugin_initialize(const variables_map& options) {
          my->chain->enable_deep_mind( &_deep_mind_log );
       }
 
+      ilog("get_block_by_number_provider");
       // set up method providers
       my->get_block_by_number_provider = app().get_method<methods::get_block_by_number>().register_provider(
             [this]( uint32_t block_num ) -> signed_block_ptr {
                return my->chain->fetch_block_by_number( block_num );
             } );
 
+      ilog("my->get_block_by_id_provider");
       my->get_block_by_id_provider = app().get_method<methods::get_block_by_id>().register_provider(
             [this]( block_id_type id ) -> signed_block_ptr {
                return my->chain->fetch_block_by_id( id );
             } );
 
+      ilog("get_head_block_id_provider");
       my->get_head_block_id_provider = app().get_method<methods::get_head_block_id>().register_provider( [this]() {
          return my->chain->head_block_id();
       } );
 
+      ilog("my->get_last_irreversible_block_number_provider");
       my->get_last_irreversible_block_number_provider = app().get_method<methods::get_last_irreversible_block_number>().register_provider(
             [this]() {
                return my->chain->last_irreversible_block_num();
             } );
 
+      ilog("my->pre_accepted_block_connection");
       // relay signals to channels
       my->pre_accepted_block_connection = my->chain->pre_accepted_block.connect([this](const signed_block_ptr& blk) {
          auto itr = my->loaded_checkpoints.find( blk->block_num() );
@@ -1187,11 +1199,13 @@ void chain_plugin::plugin_initialize(const variables_map& options) {
          my->pre_accepted_block_channel.publish(priority::medium, blk);
       });
 
+      ilog("before my->accepted_block_header_connection");
       my->accepted_block_header_connection = my->chain->accepted_block_header.connect(
             [this]( const block_state_ptr& blk ) {
                my->accepted_block_header_channel.publish( priority::medium, blk );
             } );
 
+      ilog("accepted_block_connection");
       my->accepted_block_connection = my->chain->accepted_block.connect( [this]( const block_state_ptr& blk ) {
          if (auto dm_logger = my->chain->get_deep_mind_logger()) {
             fc_dlog(*dm_logger, "ACCEPTED_BLOCK ${num} ${blk}",
@@ -1203,15 +1217,18 @@ void chain_plugin::plugin_initialize(const variables_map& options) {
          my->accepted_block_channel.publish( priority::high, blk );
       } );
 
+      ilog("before my->irreversible_block_connection");
       my->irreversible_block_connection = my->chain->irreversible_block.connect( [this]( const block_state_ptr& blk ) {
          my->irreversible_block_channel.publish( priority::low, blk );
       } );
 
+      ilog("accepted_transaction_connection");
       my->accepted_transaction_connection = my->chain->accepted_transaction.connect(
             [this]( const transaction_metadata_ptr& meta ) {
                my->accepted_transaction_channel.publish( priority::low, meta );
             } );
 
+      ilog("before my->applied_transaction_connection");
       my->applied_transaction_connection = my->chain->applied_transaction.connect(
             [this]( std::tuple<const transaction_trace_ptr&, const packed_transaction_ptr&> t ) {
                if (auto dm_logger = my->chain->get_deep_mind_logger()) {
@@ -1224,7 +1241,9 @@ void chain_plugin::plugin_initialize(const variables_map& options) {
                my->applied_transaction_channel.publish( priority::low, std::get<0>(t) );
             } );
 
+      ilog("my->chain->add_indices");
       my->chain->add_indices();
+      ilog("after my->chain->add_indices");
    } FC_LOG_AND_RETHROW()
 
 }

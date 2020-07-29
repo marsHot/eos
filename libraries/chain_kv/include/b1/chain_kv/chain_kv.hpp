@@ -134,6 +134,7 @@ struct database {
    database(const char* db_path, bool create_if_missing, std::optional<uint32_t> threads = {},
             std::optional<int> max_open_files = {}) {
 
+      wlog("rocksdb::Options options, db_path: ${a}", ("a", db_path));
       rocksdb::Options options;
       options.create_if_missing                    = create_if_missing;
       options.level_compaction_dynamic_level_bytes = true;
@@ -147,15 +148,19 @@ struct database {
       if (max_open_files)
          options.max_open_files = *max_open_files;
 
+      wlog("table_options");
       rocksdb::BlockBasedTableOptions table_options;
       table_options.format_version               = 4;
       table_options.index_block_restart_interval = 16;
       options.table_factory.reset(NewBlockBasedTableFactory(table_options));
 
+      wlog("rocksdb::DB::Open");
       rocksdb::DB* p;
       check(rocksdb::DB::Open(options, db_path, &p), "database::database: rocksdb::DB::Open: ");
+      wlog("rdb.reset(p)");
       rdb.reset(p);
 
+      wlog("WriteBatch batch");
       // Sentinels with keys 0x00 and 0xff simplify iteration logic.
       // Views have prefixes which must start with a byte within the range 0x01 - 0xfe.
       rocksdb::WriteBatch batch;
@@ -170,14 +175,28 @@ struct database {
             check(stat, "database::database: rocksdb::DB::Get: ");
          }
       };
+      wlog("write_sentinal({ 0x00 })");
       write_sentinal({ 0x00 });
+      wlog("write_sentinal({ (char)0xff })");
       write_sentinal({ (char)0xff });
-      if (modified)
+      if (modified) {
+         wlog("write(batch)");
          write(batch);
+      }
    }
 
    database(database&&) = default;
    database& operator=(database&&) = default;
+
+   ~database() {
+      if (rdb) {
+         rocksdb::Status s = rdb->Close();
+         if (!s.ok()) {
+            elog("closing database failed, ${e}", ("e", s.ToString()));
+         }
+         rdb.reset();
+      }
+   }
 
    void flush(bool allow_write_stall, bool wait) {
       rocksdb::FlushOptions op;
@@ -264,11 +283,13 @@ class undo_stack {
  public:
    undo_stack(database& db, const bytes& undo_prefix, uint64_t target_segment_size = 64 * 1024 * 1024)
        : db{ db }, undo_prefix{ undo_prefix }, target_segment_size{ target_segment_size } {
+      wlog("this->undo_prefix.empty");
       if (this->undo_prefix.empty())
          throw exception("undo_prefix is empty");
 
       // Sentinels reserve 0x00 and 0xff. This keeps rocksdb iterators from going
       // invalid during iteration.
+      wlog("this->undo_prefix[0] == 0x00");
       if (this->undo_prefix[0] == 0x00 || this->undo_prefix[0] == (char)0xff)
          throw exception("undo_stack may not have a prefix which begins with 0x00 or 0xff");
 
@@ -278,10 +299,13 @@ class undo_stack {
       segment_prefix.push_back(0x80);
       segment_next_prefix = get_next_prefix(segment_prefix);
 
+      wlog("db.rdb->Get(rocksdb::ReadOptions");
       rocksdb::PinnableSlice v;
       auto stat = db.rdb->Get(rocksdb::ReadOptions(), db.rdb->DefaultColumnFamily(), to_slice(this->state_prefix), &v);
+      wlog("if (!stat.IsNotFound())");
       if (!stat.IsNotFound())
          check(stat, "undo_stack::undo_stack: rocksdb::DB::Get: ");
+      wlog("if (stat.ok())");
       if (stat.ok()) {
          auto format_version = fc::raw::unpack<uint8_t>(v.data(), v.size());
          if (format_version)
